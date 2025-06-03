@@ -1,0 +1,334 @@
+name: Claude_ML Daily Predictions (Fixed)
+
+# Manual trigger only
+on:
+  workflow_dispatch:
+    inputs:
+      collect_days:
+        description: 'Days of data to collect (default: 7)'
+        required: false
+        default: '7'
+        type: string
+      force_retrain:
+        description: 'Force model retraining'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  generate-predictions:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # 1. Checkout your code
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    # 2. Setup Python
+    - name: Setup Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        cache: 'pip'
+        
+    # 3. Install dependencies
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    # 4. Create directory structure
+    - name: Create data directories
+      run: |
+        mkdir -p data/raw/stats
+        mkdir -p data/processed/training
+        mkdir -p data/predictions
+        mkdir -p models/trained
+        mkdir -p models/scalers
+        mkdir -p logs
+        
+    # 5. Cache the database
+    - name: Cache MLB Database
+      uses: actions/cache@v4
+      with:
+        path: data/mlb_predictions.db
+        key: mlb-database-v2-${{ github.run_number }}
+        restore-keys: |
+          mlb-database-v2-
+          mlb-database-v1-
+          
+    # 6. Cache trained models
+    - name: Cache Trained Models
+      uses: actions/cache@v4
+      with:
+        path: |
+          models/trained/
+          models/scalers/
+          models/latest_timestamp.txt
+          models/ensemble_config_*.json
+        key: mlb-models-v2-${{ hashFiles('config.yaml') }}-${{ github.run_number }}
+        restore-keys: |
+          mlb-models-v2-${{ hashFiles('config.yaml') }}-
+          mlb-models-v2-
+          mlb-models-v1-
+          
+    # 7. Initialize database if needed
+    - name: Initialize Database
+      run: |
+        if [ ! -f "data/mlb_predictions.db" ]; then
+          echo "🔧 Creating fresh database..."
+          python3 -c "
+          import sqlite3
+          
+          conn = sqlite3.connect('data/mlb_predictions.db')
+          
+          # Games table
+          conn.execute('''
+              CREATE TABLE IF NOT EXISTS games (
+                  game_id TEXT PRIMARY KEY,
+                  date TEXT,
+                  home_team TEXT,
+                  away_team TEXT,
+                  venue TEXT,
+                  start_time TEXT,
+                  weather_temp REAL,
+                  weather_wind_speed REAL,
+                  weather_wind_dir REAL,
+                  weather_conditions TEXT
+              )
+          ''')
+          
+          # Player performance table
+          conn.execute('''
+              CREATE TABLE IF NOT EXISTS player_performance (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  player_id INTEGER,
+                  player_name TEXT,
+                  game_id TEXT,
+                  date TEXT,
+                  team TEXT,
+                  home_away TEXT,
+                  at_bats INTEGER,
+                  hits INTEGER,
+                  home_runs INTEGER,
+                  exit_velocity REAL,
+                  launch_angle REAL,
+                  hard_hit_rate REAL
+              )
+          ''')
+          
+          conn.commit()
+          conn.close()
+          print('✅ Database initialized')
+          "
+        else
+          echo "✅ Database already exists"
+        fi
+        
+    # 8. Collect MLB data
+    - name: Collect MLB Data
+      run: |
+        echo "📊 Collecting MLB data for last ${{ github.event.inputs.collect_days || '7' }} days..."
+        
+        # Calculate date range
+        end_date=$(date +%Y-%m-%d)
+        start_date=$(date -d "${{ github.event.inputs.collect_days || '7' }} days ago" +%Y-%m-%d)
+        
+        echo "📅 Collecting data from $start_date to $end_date"
+        
+        # Run data collection (allow to continue if it fails)
+        python3 real_2025_collector.py "$start_date" "$end_date" || echo "⚠️ Data collection had issues, continuing..."
+        
+        # Check results
+        echo "📈 Data collection results:"
+        python3 -c "
+        import sqlite3
+        from pathlib import Path
+        
+        if Path('data/mlb_predictions.db').exists():
+            conn = sqlite3.connect('data/mlb_predictions.db')
+            try:
+                games = conn.execute('SELECT COUNT(*) FROM games').fetchone()[0]
+                players = conn.execute('SELECT COUNT(*) FROM player_performance').fetchone()[0]
+                print(f'Games: {games:,}')
+                print(f'Player performances: {players:,}')
+            except:
+                print('Database exists but may be empty')
+            conn.close()
+        else:
+            print('No database found')
+        "
+        
+    # 9. Train models if needed
+    - name: Train/Load Models
+      run: |
+        if [ "${{ github.event.inputs.force_retrain }}" = "true" ] || [ ! -f "models/latest_timestamp.txt" ]; then
+          echo "🤖 Training ML models..."
+          python3 simple_training.py
+        else
+          echo "✅ Using cached models"
+          # Verify models exist
+          if [ ! -d "models/trained" ] || [ -z "$(ls -A models/trained/)" ]; then
+            echo "⚠️ Cached models missing, training new ones..."
+            python3 simple_training.py
+          fi
+        fi
+        
+        # Verify model files exist
+        echo "🔍 Verifying model files..."
+        ls -la models/trained/ || echo "No trained models directory"
+        ls -la models/latest_timestamp.txt || echo "No timestamp file"
+        
+    # 10. Generate predictions
+    - name: Generate Daily Predictions
+      run: |
+        echo "🎯 Generating daily predictions..."
+        
+        # Use the simple daily runner
+        python3 run_daily.py
+        
+        # Show prediction summary
+        echo "📊 Prediction Summary:"
+        python3 -c "
+        import json
+        from pathlib import Path
+        from datetime import datetime
+        
+        today_str = datetime.now().strftime('%Y%m%d')
+        pred_files = [
+            f'data/predictions/calibrated_predictions_{today_str}.json',
+            f'data/predictions/simple_predictions_{today_str}.json',
+            f'data/predictions/daily_predictions_{today_str}.json'
+        ]
+        
+        for file_path in pred_files:
+            if Path(file_path).exists():
+                try:
+                    with open(file_path, 'r') as f:
+                        data = json.load(f)
+                        predictions = data.get('predictions', [])
+                        if predictions:
+                            print(f'✅ Generated {len(predictions)} predictions in {file_path}')
+                            print(f'📈 Top pick: {predictions[0][\"player_name\"]} ({predictions[0][\"hr_probability\"]:.1%})')
+                            break
+                except Exception as e:
+                    print(f'Error reading {file_path}: {e}')
+                    continue
+        else:
+            print('❌ No prediction files found')
+        "
+        
+    # 11. Send Telegram notification
+    - name: Send Predictions via Telegram
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        echo "📱 Sending predictions via Telegram..."
+        
+        # Check if credentials exist
+        if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+          echo "⚠️ Telegram credentials not found in secrets"
+          echo "💡 Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to repository secrets"
+          exit 0
+        fi
+        
+        # Create .env file for the script
+        echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN" > .env
+        echo "TELEGRAM_CHAT_ID=$TELEGRAM_CHAT_ID" >> .env
+        
+        # Test Telegram connection first
+        python3 -c "
+        import os
+        import requests
+        from dotenv import load_dotenv
+        
+        load_dotenv()
+        
+        bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+        chat_id = os.getenv('TELEGRAM_CHAT_ID')
+        
+        if bot_token and chat_id:
+            try:
+                url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
+                data = {
+                    'chat_id': chat_id,
+                    'text': '🤖 GitHub Actions test - Claude_ML predictions incoming!'
+                }
+                response = requests.post(url, json=data, timeout=10)
+                if response.status_code == 200:
+                    print('✅ Telegram test successful')
+                else:
+                    print(f'❌ Telegram test failed: {response.status_code}')
+            except Exception as e:
+                print(f'❌ Telegram test error: {e}')
+        else:
+            print('❌ Missing credentials')
+        "
+        
+        # Send predictions using the orchestrator
+        python3 daily_orchestrator.py --skip-data-update --skip-health-check || echo "⚠️ Telegram sending had issues"
+        
+    # 12. Upload artifacts
+    - name: Upload Prediction Results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: prediction-results-${{ github.run_number }}
+        path: |
+          data/predictions/*.json
+          models/latest_timestamp.txt
+          logs/*.log
+        retention-days: 30
+        
+    # 13. Show final summary
+    - name: Show Final Summary
+      if: always()
+      run: |
+        echo "🎊 WORKFLOW SUMMARY"
+        echo "==================="
+        
+        # Check if predictions were generated
+        if ls data/predictions/*.json 1> /dev/null 2>&1; then
+          echo "✅ Predictions generated successfully"
+          echo "📁 Prediction files:"
+          ls -la data/predictions/*.json
+        else
+          echo "❌ No prediction files found"
+        fi
+        
+        # Check models
+        if ls models/trained/*.joblib 1> /dev/null 2>&1; then
+          echo "✅ Model files exist"
+          echo "🤖 Model files:"
+          ls -la models/trained/*.joblib
+        else
+          echo "❌ No model files found"
+        fi
+        
+        # Database status
+        if [ -f "data/mlb_predictions.db" ]; then
+          echo "✅ Database exists"
+          python3 -c "
+          import sqlite3
+          conn = sqlite3.connect('data/mlb_predictions.db')
+          try:
+              count = conn.execute('SELECT COUNT(*) FROM player_performance').fetchone()[0]
+              print(f'📊 Database contains {count:,} player records')
+          except:
+              print('📊 Database exists but may be empty')
+          conn.close()
+          "
+        else
+          echo "❌ No database found"
+        fi
+        
+        echo ""
+        echo "🎯 Workflow completed!"
+        
+    # 14. Cleanup
+    - name: Cleanup
+      if: always()
+      run: |
+        rm -f .env
+        echo "🧹 Cleanup completed"
