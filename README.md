@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Claude_ML Baseball Predictions
 
 AI-powered MLB home run prediction system with 144k+ player performance records.
@@ -58,3 +59,6 @@ Daily Telegram messages with MLB home run predictions:
 - **Performance tracking** and backtesting
 
 Built with ❤️ for baseball analytics.
+=======
+# Claude_ML
+>>>>>>> origin/main
