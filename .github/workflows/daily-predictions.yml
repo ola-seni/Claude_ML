@@ -1,0 +1,246 @@
+name: Claude_ML Daily Predictions
+
+# Manual trigger only - no automatic scheduling
+on:
+  workflow_dispatch:
+    inputs:
+      collect_days:
+        description: 'Days of data to collect (default: 7)'
+        required: false
+        default: '7'
+        type: string
+      force_retrain:
+        description: 'Force model retraining'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  generate-predictions:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # 1. Checkout your code
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    # 2. Setup Python
+    - name: Setup Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        cache: 'pip'
+        
+    # 3. Install dependencies
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    # 4. Create directory structure
+    - name: Create data directories
+      run: |
+        mkdir -p data/raw/stats
+        mkdir -p data/processed/training
+        mkdir -p data/predictions
+        mkdir -p models/trained
+        mkdir -p models/scalers
+        mkdir -p logs
+        
+    # 5. Cache the database (speeds up subsequent runs)
+    - name: Cache MLB Database
+      uses: actions/cache@v3
+      with:
+        path: data/mlb_predictions.db
+        key: mlb-database-v1-${{ github.run_number }}
+        restore-keys: |
+          mlb-database-v1-
+          
+    # 6. Cache trained models
+    - name: Cache Trained Models
+      uses: actions/cache@v3
+      with:
+        path: |
+          models/trained/
+          models/scalers/
+          models/latest_timestamp.txt
+          models/ensemble_config_*.json
+        key: mlb-models-v1-${{ hashFiles('config.yaml') }}
+        restore-keys: |
+          mlb-models-v1-
+          
+    # 7. Initialize database if it doesn't exist
+    - name: Initialize Database
+      run: |
+        if [ ! -f "data/mlb_predictions.db" ]; then
+          echo "🔧 Creating fresh database..."
+          python3 -c "
+          import sqlite3
+          from pathlib import Path
+          
+          # Create database with required tables
+          conn = sqlite3.connect('data/mlb_predictions.db')
+          
+          # Games table
+          conn.execute('''
+              CREATE TABLE IF NOT EXISTS games (
+                  game_id TEXT PRIMARY KEY,
+                  date TEXT,
+                  home_team TEXT,
+                  away_team TEXT,
+                  venue TEXT,
+                  start_time TEXT,
+                  weather_temp REAL,
+                  weather_wind_speed REAL,
+                  weather_wind_dir REAL,
+                  weather_conditions TEXT
+              )
+          ''')
+          
+          # Player performance table
+          conn.execute('''
+              CREATE TABLE IF NOT EXISTS player_performance (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  player_id INTEGER,
+                  player_name TEXT,
+                  game_id TEXT,
+                  date TEXT,
+                  team TEXT,
+                  home_away TEXT,
+                  at_bats INTEGER,
+                  hits INTEGER,
+                  home_runs INTEGER,
+                  exit_velocity REAL,
+                  launch_angle REAL,
+                  hard_hit_rate REAL
+              )
+          ''')
+          
+          # Daily predictions table
+          conn.execute('''
+              CREATE TABLE IF NOT EXISTS daily_predictions (
+                  prediction_id INTEGER,
+                  prediction_date TEXT,
+                  game_date TEXT,
+                  player_name TEXT,
+                  game_id TEXT,
+                  hr_probability REAL,
+                  confidence_tier TEXT,
+                  matchup TEXT,
+                  venue TEXT,
+                  pitcher_name TEXT,
+                  model_version TEXT,
+                  actual_result INTEGER DEFAULT NULL,
+                  PRIMARY KEY (prediction_date, game_date, player_name)
+              )
+          ''')
+          
+          conn.commit()
+          conn.close()
+          print('✅ Database initialized')
+          "
+        else
+          echo "✅ Database already exists"
+        fi
+        
+    # 8. Collect MLB data
+    - name: Collect MLB Data
+      run: |
+        echo "📊 Collecting MLB data for last ${{ github.event.inputs.collect_days || '7' }} days..."
+        
+        # Calculate date range
+        end_date=$(date +%Y-%m-%d)
+        start_date=$(date -d "${{ github.event.inputs.collect_days || '7' }} days ago" +%Y-%m-%d)
+        
+        echo "📅 Collecting data from $start_date to $end_date"
+        
+        # Run data collection
+        python3 real_2025_collector.py "$start_date" "$end_date"
+        
+        # Check results
+        echo "📈 Data collection results:"
+        python3 -c "
+        import sqlite3
+        conn = sqlite3.connect('data/mlb_predictions.db')
+        games = conn.execute('SELECT COUNT(*) FROM games').fetchone()[0]
+        players = conn.execute('SELECT COUNT(*) FROM player_performance').fetchone()[0]
+        conn.close()
+        print(f'Games: {games:,}')
+        print(f'Player performances: {players:,}')
+        "
+        
+    # 9. Train models (if needed)
+    - name: Train/Load Models
+      run: |
+        if [ "${{ github.event.inputs.force_retrain }}" = "true" ] || [ ! -f "models/latest_timestamp.txt" ]; then
+          echo "🤖 Training ML models..."
+          python3 improved_training.py
+        else
+          echo "✅ Using cached models"
+        fi
+        
+    # 10. Generate predictions
+    - name: Generate Daily Predictions
+      run: |
+        echo "🎯 Generating daily predictions..."
+        python3 run_daily.py
+        
+        # Show prediction summary
+        echo "📊 Prediction Summary:"
+        python3 -c "
+        import json
+        from pathlib import Path
+        from datetime import datetime
+        
+        today_str = datetime.now().strftime('%Y%m%d')
+        pred_files = [
+            f'data/predictions/calibrated_predictions_{today_str}.json',
+            f'data/predictions/fixed_predictions_{today_str}.json', 
+            f'data/predictions/daily_predictions_{today_str}.json'
+        ]
+        
+        for file_path in pred_files:
+            if Path(file_path).exists():
+                with open(file_path, 'r') as f:
+                    data = json.load(f)
+                    predictions = data.get('predictions', [])
+                    if predictions:
+                        print(f'✅ Generated {len(predictions)} predictions')
+                        print(f'📈 Top pick: {predictions[0][\"player_name\"]} ({predictions[0][\"hr_probability\"]:.1%})')
+                        break
+        else:
+            print('❌ No prediction files found')
+        "
+        
+    # 11. Send Telegram notification
+    - name: Send Predictions via Telegram
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        echo "📱 Sending predictions via Telegram..."
+        
+        # Create .env file for the script
+        echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN" > .env
+        echo "TELEGRAM_CHAT_ID=$TELEGRAM_CHAT_ID" >> .env
+        
+        # Send predictions
+        python3 daily_orchestrator.py --skip-data-update --skip-health-check
+        
+    # 12. Upload prediction files as artifacts
+    - name: Upload Prediction Results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: prediction-results-${{ github.run_number }}
+        path: |
+          data/predictions/*.json
+          logs/*.log
+        retention-days: 30
+        
+    # 13. Cleanup sensitive files
+    - name: Cleanup
+      if: always()
+      run: |
+        rm -f .env
+        echo "🧹 Cleanup completed"
