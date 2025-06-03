@@ -1,0 +1,111 @@
+data_collection:
+  historical_days: 90
+  start_date: "2024-04-01"
+  end_date: "2024-07-01"
+
+data_sources:
+  rotowire:
+    enabled: true
+    url: "https://www.rotowire.com/baseball/daily-lineups.php"
+  mlb_stats_api:
+    enabled: true
+    rate_limit_delay: 0.5
+  statcast:
+    enabled: true
+    chunk_size: 7
+  fangraphs:
+    enabled: true
+    via_pybaseball: true
+  weather:
+    enabled: true
+    api_key: "YOUR_OPENWEATHER_API_KEY"
+
+features:
+  rolling_windows: [3, 7, 14, 30]
+  min_plate_appearances: 50
+  min_innings_pitched: 20
+  include_groups:
+    - "batting_stats"
+    - "power_metrics"
+    - "recent_form"
+    - "platoon_splits"
+    - "park_factors"
+    - "weather_impact"
+    - "pitcher_tendencies"
+    - "historical_matchups"
+
+model:
+  algorithms:
+    - "xgboost"
+    - "random_forest"
+    - "neural_network"
+    - "logistic_regression"
+  ensemble_method: "weighted_average"
+  train_test_split: 0.8
+  validation_split: 0.2
+  random_state: 42
+  retrain_frequency: "weekly"
+  min_data_points: 1000
+
+predictions:
+  run_times:
+    morning: "10:00"
+    evening: "17:00"
+  total_predictions: 10
+  tiers:
+    premium: 3
+    standard: 4
+    value: 3
+  min_probability: 0.04
+  exclude_pitchers: true
+  min_season_hrs: 5
+
+backtesting:
+  enabled: true
+  metrics:
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "roi"
+
+database:
+  path: "data/mlb_predictions.db"
+  backup_frequency: "daily"
+
+logging:
+  level: "INFO"
+  file: "logs/claude_ml.log"
+  max_size: "10MB"
+  backup_count: 5
+
+telegram:
+  enabled: true
+  bot_token: "YOUR_BOT_TOKEN"
+  chat_id: "YOUR_CHAT_ID"
+
+error_handling:
+  max_retries: 3
+  retry_delay: 60
+  alert_on_failure: true
+
+park_factors:
+  COL: 1.35
+  CIN: 1.18
+  TEX: 1.15
+  NYY: 1.15
+  CWS: 1.12
+  PHI: 1.10
+  MIL: 1.08
+  CHC: 1.08
+  BAL: 1.05
+  ATL: 1.05
+  HOU: 1.05
+  LAA: 1.05
+  SF: 0.90
+  OAK: 0.90
+  MIA: 0.87
+
+feature_tracking:
+  track_importance: true
+  top_features_to_show: 20
+  update_frequency: "weekly"

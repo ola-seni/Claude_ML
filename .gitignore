@@ -1,0 +1,56 @@
+# Credentials and sensitive data
+.env
+credentials.json
+*.key
+config_local.yaml
+
+# Data files (too large for GitHub)
+data/*.db
+data/*.csv
+data/raw/
+data/processed/
+data/predictions/
+data/backtesting/
+
+# Model files (too large for GitHub)  
+models/trained/
+models/scalers/
+*.joblib
+*.pkl
+
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Development files
+debug_*.py
+test_*.py
+*_test.py
+fix_*.py
+safe_*.py
+simple_*.py
+quick_*.py
+working_*.py
+calibrated_*.py
+improved_*.py

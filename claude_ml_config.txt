@@ -1,0 +1,150 @@
+# Claude_ML Configuration File
+# All system settings in one place
+
+# Data Collection Settings
+data_collection:
+  historical_days: 90  # 3 months of historical data
+  start_date: "2024-04-01"  # Season start for historical collection
+  end_date: "2024-07-01"    # End of historical period
+  
+# Data Sources
+data_sources:
+  rotowire:
+    enabled: true
+    url: "https://www.rotowire.com/baseball/daily-lineups.php"
+    
+  mlb_stats_api:
+    enabled: true
+    rate_limit_delay: 0.5  # seconds between requests
+    
+  statcast:
+    enabled: true
+    chunk_size: 7  # days per request to avoid timeouts
+    
+  fangraphs:
+    enabled: true
+    via_pybaseball: true
+    
+  weather:
+    enabled: true
+    api_key: "YOUR_OPENWEATHER_API_KEY"  # Move to credentials.yaml
+
+# Feature Engineering
+features:
+  # Rolling windows for stats (in days)
+  rolling_windows: [3, 7, 14, 30]
+  
+  # Minimum thresholds
+  min_plate_appearances: 50
+  min_innings_pitched: 20
+  
+  # Feature groups to include
+  include_groups:
+    - "batting_stats"
+    - "power_metrics"
+    - "recent_form"
+    - "platoon_splits"
+    - "park_factors"
+    - "weather_impact"
+    - "pitcher_tendencies"
+    - "historical_matchups"
+
+# Model Settings
+model:
+  # Models to train
+  algorithms:
+    - "xgboost"
+    - "random_forest"
+    - "neural_network"
+    - "logistic_regression"
+    
+  # Ensemble method
+  ensemble_method: "weighted_average"
+  
+  # Training parameters
+  train_test_split: 0.8
+  validation_split: 0.2
+  random_state: 42
+  
+  # Retraining
+  retrain_frequency: "weekly"
+  min_data_points: 1000
+
+# Prediction Settings
+predictions:
+  # Run times (ET)
+  run_times:
+    morning: "10:00"
+    evening: "17:00"
+    
+  # Number of predictions
+  total_predictions: 10
+  tiers:
+    premium: 3      # Top confidence
+    standard: 4     # Medium confidence
+    value: 3        # Lower confidence but good value
+    
+  # Minimum probability threshold
+  min_probability: 0.04  # 4% minimum HR probability
+  
+  # Filters
+  exclude_pitchers: true
+  min_season_hrs: 5     # Don't predict for players with <5 HRs
+
+# Backtesting
+backtesting:
+  enabled: true
+  metrics:
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "roi"  # If we were betting
+  
+# Database
+database:
+  path: "data/mlb_predictions.db"
+  backup_frequency: "daily"
+
+# Logging
+logging:
+  level: "INFO"
+  file: "logs/claude_ml.log"
+  max_size: "10MB"
+  backup_count: 5
+
+# Telegram Settings
+telegram:
+  enabled: true
+  bot_token: "YOUR_BOT_TOKEN"  # Move to credentials.yaml
+  chat_id: "YOUR_CHAT_ID"      # Move to credentials.yaml
+  
+# Error Handling
+error_handling:
+  max_retries: 3
+  retry_delay: 60  # seconds
+  alert_on_failure: true
+
+# Park Factors (can be updated based on analysis)
+park_factors:
+  COL: 1.35  # Coors Field
+  CIN: 1.18  # Great American Ball Park
+  TEX: 1.15  # Globe Life Field
+  NYY: 1.15  # Yankee Stadium
+  CWS: 1.12  # Guaranteed Rate Field
+  PHI: 1.10  # Citizens Bank Park
+  MIL: 1.08  # American Family Field
+  CHC: 1.08  # Wrigley Field
+  BAL: 1.05  # Camden Yards
+  ATL: 1.05  # Truist Park
+  HOU: 1.05  # Minute Maid Park
+  LAA: 1.05  # Angel Stadium
+  # ... rest of parks
+  SF: 0.90   # Oracle Park
+  OAK: 0.90  # Oakland Coliseum
+  MIA: 0.87  # loanDepot Park
+
+# Feature Importance Tracking
+feature_tracking:
+  track_importance: true
+  top_features_to_show: 20
+  update_frequency: "weekly"
