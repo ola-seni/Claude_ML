@@ -109,7 +109,7 @@ jobs:
       run: |
         if [ "${{ github.event.inputs.force_retrain }}" = "true" ] || [ ! -f "models/latest_timestamp.txt" ]; then
           echo "🤖 Training ML models..."
-          python3 improved_training.py
+          python3 fixed_quick_train.py
         else
           echo "✅ Using cached models"
         fi
