@@ -1,5 +1,5 @@
 # Claude_ML Home Run Prediction System
-# Python Dependencies
+# Python Dependencies - FIXED VERSION
 
 # Core Data Science Libraries
 pandas>=1.5.0
@@ -21,11 +21,11 @@ aiohttp>=3.8.0
 # Scheduling & Async
 schedule>=1.2.0
 
-# Telegram Bot
-python-telegram-bot>=20.0
+# Telegram Bot (fixed version)
+python-telegram-bot==20.7
 
-# Weather API
-openweather-python>=0.1.0
+# Weather API (fixed - use pyowm or remove entirely)
+# pyowm>=3.3.0
 
 # Data Visualization (for backtesting charts)
 matplotlib>=3.5.0
